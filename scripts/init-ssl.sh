@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Script to initialize SSL certificates for Marzban with Nginx
+# Since port 80 is handled by external nginx, we use standalone mode
 # Usage: ./init-ssl.sh
 
 set -e
@@ -19,6 +20,7 @@ STAGING=0  # Set to 1 for testing
 
 echo "🚀 Initializing SSL certificates for domain: $DOMAIN"
 echo "📧 Email: $EMAIL"
+echo "⚠️  Using standalone mode since external nginx handles port 80"
 
 # Create directories
 echo "📁 Creating directories..."
@@ -71,8 +73,12 @@ docker compose run --rm --entrypoint "\
   rm -Rf /etc/letsencrypt/renewal/$DOMAIN.conf" certbot
 echo "✅ Dummy certificate deleted"
 
-# Request Let's Encrypt certificate
-echo "🔒 Requesting Let's Encrypt certificate for $DOMAIN..."
+# Stop nginx temporarily for standalone mode
+echo "⏸️  Stopping nginx temporarily for certificate generation..."
+docker compose stop nginx
+
+# Request Let's Encrypt certificate using standalone mode
+echo "🔒 Requesting Let's Encrypt certificate for $DOMAIN using standalone mode..."
 
 # Prepare domain arguments
 domain_args="-d $DOMAIN"
@@ -93,17 +99,25 @@ else
   echo "🌟 Using production environment (real certificates)"
 fi
 
-# Request certificate
-docker compose run --rm --entrypoint "\
-  certbot certonly --webroot -w /var/www/certbot \
+# Request certificate using standalone mode
+docker compose run --rm --network host --entrypoint "\
+  certbot certonly --standalone \
     $staging_arg \
     $email_arg \
     $domain_args \
     --rsa-key-size $RSA_KEY_SIZE \
     --agree-tos \
-    --force-renewal" certbot
+    --force-renewal \
+    --non-interactive" certbot
 
 echo "✅ Certificate requested successfully!"
+
+# Start nginx again
+echo "🚀 Starting nginx with SSL certificates..."
+docker compose up -d nginx
+
+echo "⏳ Waiting for nginx to start..."
+sleep 5
 
 # Reload nginx
 echo "🔄 Reloading nginx..."
@@ -114,4 +128,10 @@ echo "🎉 SSL initialization completed successfully!"
 echo "🌐 Your Marzban panel should now be available at:"
 echo "   - https://$DOMAIN:8080 (Panel)"
 echo "   - VLESS Reality ports: 2053, 2083, 2087"
+echo ""
+echo "📝 Important Notes:"
+echo "   - External nginx on port 80 should handle your website"
+echo "   - SSL certificate renewal will use standalone mode"
+echo "   - Make sure to stop external nginx temporarily during renewal"
+echo ""
 echo "🔐 Don't forget to run the key generation script: ./generate-keys.sh"
