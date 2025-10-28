@@ -1,0 +1,163 @@
+name: 🚀 Secure Deploy to VPS
+
+on:
+  push:
+    branches: [marz-UP-min-ram-optimization]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+
+jobs:
+  security-scan:
+    name: 🔍 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: 🛡️ Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+  deploy:
+    name: 🚀 Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: success()
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+    - name: ✅ Validate secrets
+      run: |
+        # Check that all required secrets are present
+        test -n "${{ secrets.MYSQL_PASSWORD }}" || { echo "MYSQL_PASSWORD secret missing"; exit 1; }
+        test -n "${{ secrets.MYSQL_ROOT_PASSWORD }}" || { echo "MYSQL_ROOT_PASSWORD secret missing"; exit 1; }
+        test -n "${{ secrets.SUDO_USERNAME }}" || { echo "SUDO_USERNAME secret missing"; exit 1; }
+        test -n "${{ secrets.SUDO_PASSWORD }}" || { echo "SUDO_PASSWORD secret missing"; exit 1; }
+        test -n "${{ secrets.JWT_ACCESS_TOKEN_SECRET }}" || { echo "JWT_ACCESS_TOKEN_SECRET secret missing"; exit 1; }
+        echo "✅ All required secrets are present"
+
+    - name: 🔄 Generate VLESS keys if missing
+      run: |
+        if [ -z "${{ secrets.VLESS_PRIVATE_KEY }}" ] || [ -z "${{ secrets.VLESS_PUBLIC_KEY }}" ]; then
+          echo "⚠️ VLESS keys missing. Generating new keys..."
+          docker run --rm gozargah/marzban:latest xray x25519 > vless_keys.txt
+          echo "📝 Generated keys saved to vless_keys.txt"
+          echo "⚠️ Add these keys to GitHub Secrets:"
+          cat vless_keys.txt
+        else
+          echo "✅ VLESS keys present in secrets"
+        fi
+
+    - name: 🚀 Deploy to VPS  
+      env:
+        # Pass all secrets as environment variables
+        MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+        MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+        SUDO_USERNAME: ${{ secrets.SUDO_USERNAME }}
+        SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
+        JWT_ACCESS_TOKEN_SECRET: ${{ secrets.JWT_ACCESS_TOKEN_SECRET }}
+        VLESS_PRIVATE_KEY: ${{ secrets.VLESS_PRIVATE_KEY }}
+        VLESS_PUBLIC_KEY: ${{ secrets.VLESS_PUBLIC_KEY }}
+        VLESS_SHORT_IDS: ${{ secrets.VLESS_SHORT_IDS }}
+        DOMAIN: ${{ secrets.DOMAIN }}
+        SSL_EMAIL: ${{ secrets.SSL_EMAIL }}
+        SERVER_IP: ${{ secrets.SERVER_IP }}
+      run: |
+        ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+          set -e
+          
+          echo "📁 Navigating to work directory"
+          cd ${{ secrets.WORK_DIR || '/opt/marzban' }}
+          
+          echo "🛑 Stopping old containers"
+          docker compose -f docker-compose.secure.yml down || true
+          
+          echo "📥 Updating code"
+          git pull origin marz-UP-min-ram-optimization
+          
+          echo "🔐 Setting up environment variables"
+          export MYSQL_PASSWORD="$MYSQL_PASSWORD"
+          export MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
+          export SUDO_USERNAME="$SUDO_USERNAME"
+          export SUDO_PASSWORD="$SUDO_PASSWORD"
+          export JWT_ACCESS_TOKEN_SECRET="$JWT_ACCESS_TOKEN_SECRET"
+          export VLESS_PRIVATE_KEY="$VLESS_PRIVATE_KEY"
+          export VLESS_PUBLIC_KEY="$VLESS_PUBLIC_KEY"
+          export VLESS_SHORT_IDS="$VLESS_SHORT_IDS"
+          export DOMAIN="$DOMAIN"
+          export SSL_EMAIL="$SSL_EMAIL"
+          export SERVER_IP="$SERVER_IP"
+          
+          echo "🚀 Starting secure deployment"
+          docker compose -f docker-compose.secure.yml pull
+          docker compose -f docker-compose.secure.yml up -d
+          
+          echo "⏳ Waiting for services to be ready"
+          sleep 30
+          
+          echo "🏥 Health check"
+          docker compose -f docker-compose.secure.yml ps
+          
+          echo "✅ Deployment completed successfully"
+        EOF
+
+    - name: 🧪 Post-deployment tests
+      run: |
+        ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+          echo "Testing MySQL connection..."
+          docker compose -f docker-compose.secure.yml exec -T mysql mysqladmin ping -h localhost || echo "❌ MySQL not responding"
+          
+          echo "Testing Marzban API..."
+          curl -f -k https://${{ secrets.DOMAIN }}:8080/docs > /dev/null || echo "❌ Marzban API not responding"
+          
+          echo "Testing VLESS ports..."
+          for port in 2053 2083 2087; do
+            timeout 2 bash -c "echo >/dev/tcp/localhost/$port" 2>/dev/null && echo "✅ Port $port open" || echo "❌ Port $port closed"
+          done
+        EOF
+
+    - name: 🧹 Cleanup SSH
+      if: always()
+      run: rm -rf ~/.ssh
+
+    - name: 📊 Deployment Summary
+      if: success()
+      run: |
+        echo "## 🎉 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**🌐 Panel URL:** https://${{ secrets.DOMAIN }}:8080" >> $GITHUB_STEP_SUMMARY
+        echo "**👤 Username:** ${{ secrets.SUDO_USERNAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "**🔐 Password:** [HIDDEN]" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**🚀 VLESS Ports:**" >> $GITHUB_STEP_SUMMARY
+        echo "- 2053 (Google Reality)" >> $GITHUB_STEP_SUMMARY
+        echo "- 2083 (Microsoft Reality)" >> $GITHUB_STEP_SUMMARY
+        echo "- 2087 (Cloudflare Reality)" >> $GITHUB_STEP_SUMMARY
