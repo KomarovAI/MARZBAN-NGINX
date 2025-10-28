@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # Marzban VPN Panel
+  # Marzban VPN Panel (оптимизированный)
   marzban:
     image: gozargah/marzban:latest
     container_name: marzban
@@ -10,6 +8,7 @@ services:
     environment:
       - UVICORN_HOST=0.0.0.0
       - UVICORN_PORT=8000
+      - UVICORN_WORKERS=1
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -20,8 +19,21 @@ services:
       - marzban_net
     depends_on:
       - mysql
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://localhost:8000/api/admin/token", "-k"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  # MySQL Database
+  # MySQL (ультра-минимальный)
   mysql:
     image: mysql:8.0
     container_name: marzban_mysql
@@ -35,20 +47,38 @@ services:
       - "127.0.0.1:3306:3306"
     volumes:
       - /var/lib/marzban/mysql:/var/lib/mysql
-    command: --bind-address=0.0.0.0 --mysqlx-bind-address=0.0.0.0 --disable-log-bin
+      - ./mysql-ultra-minimal.conf:/etc/mysql/conf.d/minimal.cnf:ro
+    command: >
+      --bind-address=0.0.0.0
+      --mysqlx-bind-address=0.0.0.0
+      --disable-log-bin
+      --performance-schema=OFF
+      --skip-name-resolve
     networks:
       - marzban_net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
-  # Nginx Reverse Proxy for Marzban Panel only
+  # Nginx (минимальный)
   nginx:
     image: nginx:alpine
     container_name: marzban_nginx
     restart: unless-stopped
     ports:
-      - "2053:2053"  # VLESS Reality port
-      - "2083:2083"  # Alternative VLESS port
-      - "2087:2087"  # Alternative VLESS port
-      - "8080:8080"  # Marzban panel port (HTTPS)
+      - "2053:2053"
+      - "2083:2083"
+      - "2087:2087"
+      - "8080:8080"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -62,8 +92,15 @@ services:
         sleep 6h & wait $${!};
         nginx -s reload;
       done & nginx -g "daemon off;"'
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.2'
+        reservations:
+          memory: 16M
 
-  # Certbot for SSL certificates
+  # Certbot (минимальный)
   certbot:
     image: certbot/certbot:latest
     container_name: marzban_certbot
@@ -77,6 +114,11 @@ services:
         certbot renew --quiet --no-self-upgrade;
         sleep 12h & wait $${!};
       done;'
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
 
 networks:
   marzban_net:
