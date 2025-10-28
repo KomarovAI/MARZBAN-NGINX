@@ -1,0 +1,53 @@
+# Environment files containing secrets
+.env
+.env.local
+.env.production
+.env.development
+.env.staging
+
+# SSL certificates and private keys
+certbot/
+*.pem
+*.key
+*.crt
+
+# Database files
+/var/lib/marzban/
+mysql/
+
+# Logs
+*.log
+*.log.*
+docker-compose.log
+xray.log
+nginx.log
+
+# Backups
+*.backup
+*.bak
+*.old
+
+# Client configurations (may contain sensitive data)
+vless_client_config.json
+
+# Temporary files
+*.tmp
+*.temp
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+data/
+volumes/
+
+# BFG Repo-Cleaner
+bfg-*.jar
