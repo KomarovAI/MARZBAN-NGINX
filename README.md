@@ -205,17 +205,51 @@ MYSQL_PASSWORD=WARpteN789298
 # Оптимизация производительности
 SQLALCHEMY_POOL_SIZE=10
 SQLALCHEMY_MAX_OVERFLOW=30
+
+# SSL для внешнего доступа (важно!)
+UVICORN_SSL_CERTFILE=/etc/letsencrypt/live/botinger789298.work.gd/fullchain.pem
+UVICORN_SSL_KEYFILE=/etc/letsencrypt/live/botinger789298.work.gd/privkey.pem
 ```
 
 ## 📱 Доступ к панели
 
-**URL:** https://botinger789298.work.gd:8080
+**URL:** https://botinger789298.work.gd:8080/dashboard/
 
 **Учетные данные:**
 - Пользователь: `artur789298`
 - Пароль: `WARpteN789298`
 
 ## ❓ Устранение неполадок
+
+### 🚨 502 Bad Gateway при доступе к панели
+
+**Причина:** Marzban с версии 0.7.0 по умолчанию привязывается только к localhost без SSL сертификатов.
+
+**Решение:**
+1. Убедитесь, что в `.env` присутствуют переменные SSL:
+   ```bash
+   UVICORN_SSL_CERTFILE=/etc/letsencrypt/live/botinger789298.work.gd/fullchain.pem
+   UVICORN_SSL_KEYFILE=/etc/letsencrypt/live/botinger789298.work.gd/privkey.pem
+   ```
+
+2. Проверьте, что SSL сертификаты монтируются в контейнер Marzban:
+   ```bash
+   # В docker-compose.yml должен быть volume:
+   - ./certbot/conf:/etc/letsencrypt:ro
+   ```
+
+3. Убедитесь, что nginx проксирует на HTTPS:
+   ```bash
+   # В nginx/conf.d/marzban.conf должно быть:
+   proxy_pass https://marzban:8000;
+   proxy_ssl_verify off;
+   ```
+
+4. Проверьте логи Marzban - должно быть:
+   ```bash
+   docker compose logs marzban | grep "Uvicorn running"
+   # Ожидаемый результат: "Uvicorn running on https://0.0.0.0:8000"
+   ```
 
 ### Проблемы с SSL
 ```bash
@@ -245,6 +279,23 @@ docker compose exec mysql mysql -uroot -pWARpteN789298_root
 
 # Создание бекапа
 docker compose exec mysql mysqldump -uroot -pWARpteN789298_root marzban > backup.sql
+```
+
+### Конфликт портов при развертывании
+
+**Проблема:** Порты 80/443 заняты другими сервисами.
+
+**Решение:**
+```bash
+# Найдите и остановите конфликтующие контейнеры
+docker ps | grep -E ":80|:443"
+docker stop CONTAINER_NAME
+
+# Или временно остановите внешний nginx
+sudo systemctl stop nginx
+
+# После развертывания Marzban можете запустить обратно
+sudo systemctl start nginx
 ```
 
 ## 📞 Поддержка
