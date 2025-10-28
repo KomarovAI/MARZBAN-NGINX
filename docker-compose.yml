@@ -15,6 +15,7 @@ services:
     volumes:
       - /var/lib/marzban:/var/lib/marzban
       - ./xray_config.json:/usr/local/share/xray/xray_config.json:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
     networks:
       - marzban_net
     depends_on:
